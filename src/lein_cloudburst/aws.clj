@@ -79,13 +79,11 @@
   (aws-base http/delete url wrapper))
 
 (defn ^:private aws-post [url wrapper body]
-  (try (let [res (http/with-additional-middleware
-                   [wrapper aws-sig4/wrap-aws-date]
-                   (http/post url {:body (json/generate-string body)}))
-             body (:body res)]
-         (assoc res :body (json/parse-string body true)))
-       (catch Exception e
-         (clojure.pprint/pprint e))))
+  (let [res (http/with-additional-middleware
+              [wrapper aws-sig4/wrap-aws-date]
+              (http/post url {:body (json/generate-string body)}))
+        body (:body res)]
+    (assoc res :body (json/parse-string body true))))
 
 ;; --------------------
 ;; Public-facing functions
@@ -99,16 +97,24 @@
   (let [url (str (:lambda base-urls) "/2015-03-31/functions/" fname)]
     (:body (aws-delete url (:lambda wrappers)))))
 
-(defn create-function [fname jar-path]
-  (let [url (str (:lambda base-urls) "/2015-03-31/functions/")
+(defn create-function [cloud-fn-meta jar-path]
+  (let [{fname :cloudburst/name} cloud-fn-meta
+        {:keys [:cloudburst/runtime
+                :cloudburst/memory
+                :cloudburst/role]} cloud-fn-meta
+        handler (str (:ns cloud-fn-meta) "." (:name cloud-fn-meta))
+        url (str (:lambda base-urls) "/2015-03-31/functions/")
         body {:Code
               {:ZipFile
                (String.
                 (b64/encode
-                 (byte-buffer-file "./target/lambda-test-0.1.0-SNAPSHOT-standalone.jar")))}
-              :FunctionName "lambda-test_services_hello_core_world2"
-              :Handler "lambda-test.services.hello.core.world2"
-              :Role "arn:aws:iam::332243152968:role/service-role/workco-node-hello-world"
-              :Runtime "java8"
-              :MemorySize 512}]
-    (:body (aws-post url (:lambda wrappers) body))))
+                 (byte-buffer-file jar-path)))}
+              :FunctionName fname
+              :Handler handler
+              :Role role
+              :Runtime (name runtime)
+              :MemorySize memory}
+        res (aws-post url (:lambda wrappers) body)]
+    (if (= 201 (:status res))
+      (:body res)
+      (throw (ex-info "Failure uploading." res)))))

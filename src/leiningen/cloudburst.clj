@@ -50,11 +50,16 @@
                                 (all-ns)))]
        ~(stream-meta-out* port 'all-metas))))
 
-(defn ^:private run-eval [project]
-  (go (lein-eval/eval-in-project
-       project
-       (eval-code*)
-       '(require 'lambda-test.services.hello.core 'clojure.pprint))))
+(defn ^:private run-eval [{:keys [cloudburst] :as project}]
+  (assert (:namespaces cloudburst) "project.clj must have :cloudburst {:namespaces [...]}")
+  (let [req (seq (reduce (fn [c i]
+                           (conj c (symbol (str "'" i))))
+                         ['require]
+                         (:namespaces cloudburst)))]
+    (go (lein-eval/eval-in-project
+         project
+         (eval-code*)
+         req))))
 
 (defn ^:private object-reader [i]
   (-> i last symbol))
@@ -68,14 +73,20 @@
         server (create-server port)
         from-subprocess (chan)]
     (server-async-read server from-subprocess)
-    (println "Inspecting for cloud functions")
+    (println "Inspecting for cloud functions...")
     (run-eval project)
     (let [cloud-fns (-> (<!! from-subprocess)
                         first
                         read-edn-string)]
       (doseq [cloud-fn cloud-fns]
-        (println "Deploying" (str (:ns cloud-fn) (:name cloud-fn)))
-        (println cloud-fn)))
+        (println "Deploying" (str (:ns cloud-fn) "/" (:name cloud-fn)) "...")
+        (clojure.pprint/pprint cloud-fn)
+        (try
+          (clojure.pprint/pprint (aws/create-function cloud-fn
+                                                      jar-filename))
+          (catch Exception e
+            (clojure.pprint/pprint e)))
+        ))
     (println "Done!"))
   
   #_(clojure.pprint/pprint project)
